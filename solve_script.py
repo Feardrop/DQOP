@@ -7,7 +7,6 @@ Created on Thu Feb 21 16:53:28 2019
 import logging
 import os
 import model_MINLP
-from model_class import MINLP
 from loadexcel import Dataset
 from pyomo.opt import SolverFactory, SolverManagerFactory
 # from pyomo.opt.parallel import SolverManagerFactory as SMF
@@ -452,6 +451,6 @@ if __name__ == "__main__":
     # sol.solveInstance(u=0.99 , Costs_ges_max=None, n=1)
     # sol.solveInstance(u=0.99, Costs_ges_max=None, n=1, break_points_type=1)
     # sol.solveInstance(u=0.99, Costs_ges_max=None, n=1, break_points_type=2)
-    sol.solveInstance(u=0.99, Costs_ges_max=None, n=1, func_factor_DQ=2)
-    sol.rebuildModel(repn_DQ=4)
+    # sol.solveInstance(u=0.99, Costs_ges_max=None, n=1, func_factor_DQ=2)
+    sol.rebuildModel(repn_DQ=5)
     sol.solveInstance(u=0.99, Costs_ges_max=None, n=1, func_factor_DQ=2)

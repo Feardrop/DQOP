@@ -277,8 +277,6 @@ class SolverInstance:
         """Set steps for epsilon."""
         pass
 
-###############################################################################
-
     def loadData(self, filename):
         """Loads the data from an excel-file a dict.
 
@@ -311,11 +309,11 @@ class SolverInstance:
     def printModel(self):
         self.model.pprint()
 
-    def updateResults(self, result_dict):
+    def updateResults(self, r_dict):
         try:
-            self.results.update(result_dict)
+            self.results.update(r_dict)
         except AttributeError:
-            self.results = result_dict
+            self.results = r_dict
 
     def getResults(self):
         for inst_name_, result_ in self.results.items():
@@ -365,11 +363,11 @@ class SolverInstance:
                                         executable=self.EXE_path)
                 # Solve the instance :: Clean gets no Logs
                 if not self.clean:
-                    result = solver_manager.solve(instance, opt=opt,
+                    self.result = solver_manager.solve(instance, opt=opt,
                                                   tee=self.tee,
                                                   logfile=inst_name+".log")
                 else:
-                    result = solver_manager.solve(instance, opt=opt,
+                    self.result = solver_manager.solve(instance, opt=opt,
                                                   tee=self.tee,)
         else:
             path_log = ["logs", "logfiles", inst_name+".log"]
@@ -386,12 +384,12 @@ class SolverInstance:
 
                     # Solve the instance :: Clean gets no Logs
                     if not self.clean:
-                        result = opt.solve(instance, tee=self.tee,
+                        self.result = opt.solve(instance, tee=self.tee,
                                            symbolic_solver_labels=
                                            self.symbolic_solver_labels,
                                            logfile=os.path.join(*path_log))
                     else:
-                        result = opt.solve(instance, tee=self.tee,
+                        self.result = opt.solve(instance, tee=self.tee,
                                            symbolic_solver_labels=
                                            self.symbolic_solver_labels)
             else:
@@ -407,15 +405,15 @@ class SolverInstance:
 
                     # Solve the instance :: Clean gets no Logs
                     if not self.clean:
-                        result = opt.solve(instance, tee=self.tee,
+                        self.result = opt.solve(instance, tee=self.tee,
                                            symbolic_solver_labels=
                                            self.symbolic_solver_labels,
                                            logfile=os.path.join(*path_log))
                     else:
-                        result = opt.solve(instance, tee=self.tee,
+                        self.result = opt.solve(instance, tee=self.tee,
                                            symbolic_solver_labels=
                                            self.symbolic_solver_labels)
-        self.updateResults({inst_name: result})
+        self.updateResults({inst_name: self.result})
 
         return instance
     
@@ -504,17 +502,3 @@ class SolverInstance:
                   .format(inst_name, self.instance.DQ_ges()))
             print("        Costs_ges: {1:12.2f}"
                   .format(inst_name, self.instance.Costs_ges()))
-
-
-if __name__ == "__main__":
-    sol = SolverInstance(solver_name="cbc_local",
-                         tee=False,
-                         keep_files=False,
-                         create_LP_files=False,
-                         clean=False)
-    sol.addData(func_factor_DQ={3: 9})
-
-    
-    sol.buildModel(repn_DQ=5, func_factor_DQ=2)
-    
-    sol.solveInstance(u=0.99 , Costs_ges_max=None, n=1)

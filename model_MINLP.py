@@ -9,10 +9,35 @@ Created on Thu Feb 21 16:48:02 2019
 
 import pyomo.environ as pe
 
-def createModel(repn_DQ=3, 
-                constr_DQ=2, 
-                PieceCnt_DQ=10, 
-                func_factor_DQ=2):
+def createModel(repn_DQ=3, constr_DQ=2, PieceCnt_DQ=10, func_factor_DQ=2, **kwargs):
+    """This funtion creates a model.
+    
+    Parameters
+    ----------
+    repn_DQ: :const:`int=3`
+        Representation of the piecewise function for DataQualities::
+        
+            0: BIGM_SOS1,   5: DLOG,
+            1: BIGM_BIN,    6: LOG,
+            2: SOS2,        7: MC,
+            3: CC,          8: INC,
+            4: DCC,      None: None
+
+    constr_DQ: :const:`int=2`
+        Constraint method::
+            
+            0: UB,          2: EQ,
+            1: LB,       None: None
+            
+    PieceCnt_DQ: :const:`int=10`
+        Piecewise section count.
+        
+    func_factor_DQ: :const:`int=2`
+        Sets the power ``**(1/func_factor_DQ)`` to the calculation function :py:func:`Compute_DQ_rule`.
+        
+    kwargs:
+        Add additional Values. (Currently unused.)
+    """
 
     model = pe.AbstractModel(name="MI(N)LP")
 
@@ -762,15 +787,15 @@ def createModel(repn_DQ=3,
     # the only goal is to trigger the action at build time
     model.BuildBpts_DQ = pe.BuildAction(model.G, rule=bpts_DQ_build)
 
-    def Compute_DQ_sqrt_rule(model, g, x):
+    def Compute_DQ_rule(model, g, z):
             return (sum(model.upsilon_ny[g, q] for q in model.Q)
-                    * ((x - pe.value(model.z_DQ_lb[g]))**(
+                    * ((z - pe.value(model.z_DQ_lb[g]))**(
                             1/pe.value(model.func_factor_DQ[g])))
                     / ((pe.value(model.z_DQ_ub[g])
                     - pe.value(model.z_DQ_lb[g]))**(
                             1/pe.value(model.func_factor_DQ[g])))
                     + sum(model.upsilon_ny_invers[g, q] for q in model.Q)
-                    * (1-((x - pe.value(model.z_DQ_lb[g]))**(
+                    * (1-((z - pe.value(model.z_DQ_lb[g]))**(
                             1/pe.value(model.func_factor_DQ[g])))
                     / ((pe.value(model.z_DQ_ub[g])
                     - pe.value(model.z_DQ_lb[g]))**(
@@ -781,7 +806,7 @@ def createModel(repn_DQ=3,
                                        model.translate_repn[model.repn_DQ],
                                        pw_constr_type=
                                        model.translate_constr[model.constr_DQ],
-                                       f_rule=Compute_DQ_sqrt_rule)
+                                       f_rule=Compute_DQ_rule)
 
 
 

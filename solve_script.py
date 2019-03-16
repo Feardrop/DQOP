@@ -22,7 +22,35 @@ logger = logging.getLogger('pyomo_script')
 # Einstellungen
 
 class SolverInstance:
-    """ 
+    """Creates a Solver Instance.
+    
+    Parameters:
+        
+        solver_name :: string
+            Defines the used Solver.
+            For possible solvers use the ``helpSolvers()`` method.
+        model_module :: model_MINLP
+            Imported model-file/module
+        model_properties :: {}
+            See ``buildModel()`` for possible keywords.
+        datafile :: string 
+            Excel file. ``databaseX.xlsm``
+        live_output :: True/(False)
+            Enables output. False for clean run without any feedback.
+    
+    List of supported Solvers:
+        - cbc_local
+        - cbc_neos
+        - couenne_local
+        - couenne_neos
+        - bonmin_local
+        - bonmin_neos
+        - cplex_local
+        - cplex_nl_local
+        - cplex_neos
+        - minos_neos
+        - glpk_local
+        - glpk_neos
     """
     def __init__(self, 
                  solver_name="cbc_local", 
@@ -37,7 +65,7 @@ class SolverInstance:
         self.solver_name = solver_name
         self.live_output = live_output
         self.model_module = model_module
-        self.model = self.model_module.createModel(**model_properties)
+        self.buildModel(**model_properties)  # Sets self.model
         self.kwargs = kwargs
         self.datafile = datafile
         self.solver_options = {}
@@ -179,17 +207,13 @@ class SolverInstance:
         print(', '.join(solver_list))
 
     def setProperties(self,  # !!!
-                      u=1,
-                      steps=1,
-                      n=1,
                       symbolic_solver_labels=True,
                       tee=False,  # True prints solver output to screen
                       keep_files=False,  # True prints intermediate file names
                       create_LP_files=False,
                       create_NL_files=False,
                       clean=False):
-        self.u = u
-        self.steps = steps
+        """Sets Properties for the solving process."""
         self.symbolic_solver_labels = symbolic_solver_labels
         self.tee = tee
         self.keep_files = keep_files
@@ -200,8 +224,6 @@ class SolverInstance:
     def getProperties(self):
         """Prints all current properties."""
         print("\n############# Current properties: ##############")
-        # print("# u:                     {0:5}".format(self.u))
-        print("# steps:                 {0:5}".format(self.steps))
         print("# symbolic_solver_labels:",   self.symbolic_solver_labels)
         print("# tee (live log):        ",   self.tee)
         print("# keep_files:            ",   self.keep_files)
@@ -289,7 +311,36 @@ class SolverInstance:
             print("Results for "+inst_name_)
             result_.write()
     
-    def rebuildModel(self, **kwargs):
+    def buildModel(self, **kwargs):
+        """Builds the model with given ``**kwargs``
+        
+        Parameters
+        ----------
+        repn_DQ: :const:`int=3`
+            Representation of the piecewise function for DataQualities::
+            
+                0: BIGM_SOS1,   5: DLOG,
+                1: BIGM_BIN,    6: LOG,
+                2: SOS2,        7: MC,
+                3: CC,          8: INC,
+                4: DCC,      None: None
+    
+        constr_DQ: :const:`int=2`
+            Constraint method::
+                
+                0: UB,          2: EQ,
+                1: LB,       None: None
+                
+        PieceCnt_DQ: :const:`int=10`
+            Piecewise section count.
+            
+        func_factor_DQ: :const:`int=2`
+            Sets the power ``**(1/func_factor_DQ)`` to the calculation function :py:func:`Compute_DQ_rule`.
+            
+        kwargs:
+            Add additional Values. (Currently unused.)
+        """
+        
         self.model = self.model_module.createModel(**kwargs)
         
     def solveGeneratedInstance(self, instance, inst_name):
@@ -404,6 +455,8 @@ class SolverInstance:
                 if value is not None:
                     self.instance.__setattr__(key, value)
         
+
+        
         # Write generated Model-Instance
         if not self.clean:
             path_generated = ["logs", "generated_model_instances",
@@ -452,5 +505,5 @@ if __name__ == "__main__":
     # sol.solveInstance(u=0.99, Costs_ges_max=None, n=1, break_points_type=1)
     # sol.solveInstance(u=0.99, Costs_ges_max=None, n=1, break_points_type=2)
     # sol.solveInstance(u=0.99, Costs_ges_max=None, n=1, func_factor_DQ=2)
-    sol.rebuildModel(repn_DQ=5)
-    sol.solveInstance(u=0.99, Costs_ges_max=None, n=1, func_factor_DQ=2)
+    # sol.buildModel(repn_DQ=5, func_factor_DQ=2)
+    # sol.solveInstance(u=0.5, Costs_ges_max=None, n=1)#,  **{func_factor_DQ[3]:5}, **{func_factor_DQ[4]:5})

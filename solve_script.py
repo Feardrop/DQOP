@@ -512,10 +512,9 @@ if __name__ == "__main__":
                          keep_files=False,
                          create_LP_files=False,
                          clean=False)
-    sol.addData(func_factor_DQ={3: 10})
-    # sol.solveInstance(u=0.99 , Costs_ges_max=None, n=1)
-    # sol.solveInstance(u=0.99, Costs_ges_max=None, n=1, break_points_type=1)
-    # sol.solveInstance(u=0.99, Costs_ges_max=None, n=1, break_points_type=2)
-    # sol.solveInstance(u=0.99, Costs_ges_max=None, n=1, func_factor_DQ=2)
-    # sol.buildModel(repn_DQ=5, func_factor_DQ=2)
-    # sol.solveInstance(u=0.5, Costs_ges_max=None, n=1)#,  **{func_factor_DQ[3]:5}, **{func_factor_DQ[4]:5})
+    sol.addData(func_factor_DQ={3: 9})
+
+    
+    sol.buildModel(repn_DQ=5, func_factor_DQ=2)
+    
+    sol.solveInstance(u=0.99 , Costs_ges_max=None, n=1)

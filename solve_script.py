@@ -14,6 +14,7 @@ from pyomo.opt import SolverFactory, SolverManagerFactory
 # from pprint import pprint
 # from pyomo.environ import TransformationFactory
 from defandsave import savedata
+from excelread import deep_merge
 import time
 import textwrap
 
@@ -293,8 +294,18 @@ class SolverInstance:
             savedata(self.data, "input_data", "logs/input_data", human=True)
     
     def addData(self, **kwargs):
+        """Adds data to the loaded ``self.data`` variable.
+        
+        Usage::
+            
+            addData('func_factor_DQ'={5: 9})
+            
+        """
         for key, value in kwargs.items():
-            self.data[None].update({key: {None: value}})
+            if type(value) is dict:
+                deep_merge(self.data[None],{key: value})
+            else:
+                self.data[None].update({key: {None: value}})
 
     
     def printModel(self):
@@ -501,6 +512,7 @@ if __name__ == "__main__":
                          keep_files=False,
                          create_LP_files=False,
                          clean=False)
+    sol.addData(func_factor_DQ={3: 10})
     # sol.solveInstance(u=0.99 , Costs_ges_max=None, n=1)
     # sol.solveInstance(u=0.99, Costs_ges_max=None, n=1, break_points_type=1)
     # sol.solveInstance(u=0.99, Costs_ges_max=None, n=1, break_points_type=2)

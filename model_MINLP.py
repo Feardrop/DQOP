@@ -9,57 +9,16 @@ Created on Thu Feb 21 16:48:02 2019
 
 import pyomo.environ as pe
 
-def createModel(repn_DQ=3, constr_DQ=2, PieceCnt_DQ=10):
+def createModel(repn_DQ=3, 
+                constr_DQ=2, 
+                PieceCnt_DQ=10, 
+                func_factor_DQ=2):
 
     model = pe.AbstractModel(name="MI(N)LP")
 
     model.instance_name = ""  # Define Instance Name
 
-    ###########################################################################
-    # Parameters for the Bitrate Function
 
-    # 1-simple / 2-advanced
-    model.R_J_func_type = pe.Param(default=1, mutable=True)
-
-
-    ###########################################################################
-    # Parameters for the Piecewise Linear Function for DataQualities
-
-    # 1-linear / 2-quadratic / 3-cubic / etc
-    model.func_factor_DQ  = pe.Param(default=2, mutable=True)
-
-    model.translate_repn = {0:'BIGM_SOS1',
-                            1:'BIGM_BIN',
-                            2:'SOS2',
-                            3:'CC',
-                            4:'DCC',
-                            5:'DLOG',
-                            6:'LOG',
-                            7:'MC',
-                            8:'INC',
-                            None:None}
-
-    model.translate_constr = {0:'UB',
-                              1:'LB',
-                              2:'EQ',
-                              None:None}
-
-    model.repn_DQ = repn_DQ
-    model.constr_DQ = constr_DQ
-
-    # Number of Breakpoints
-    def shift_bit_length(x):
-        """Computes the next power of two::
-        
-            (2^n)
-        """  
-        return (1<<(x-1).bit_length())
-
-    if repn_DQ == 5 or repn_DQ == 6:
-        PieceCnt_DQ = shift_bit_length(PieceCnt_DQ)-1  # -1 for next use
-        print("PieceCnt_DQ has been shifted to next (2^n)+1:", PieceCnt_DQ+2)
-
-    model.PieceCnt_DQ = PieceCnt_DQ
 
 
     ###########################################################################
@@ -173,7 +132,51 @@ def createModel(repn_DQ=3, constr_DQ=2, PieceCnt_DQ=10):
     model.R_S_ub   = pe.Param(model.S,      default=16000000000, domain=pe.NonNegativeReals)  #2000MB/s
 
 
+    ###########################################################################
+    # Parameters for the Bitrate Function
 
+    # 1-simple / 2-advanced
+    model.R_J_func_type = pe.Param(default=1, mutable=True)
+
+
+    ###########################################################################
+    # Parameters for the Piecewise Linear Function for DataQualities
+
+    # 1-linear / 2-quadratic / 3-cubic / etc
+    model.func_factor_DQ  = pe.Param(model.G, default=func_factor_DQ, mutable=True)
+
+    model.translate_repn = {0:'BIGM_SOS1',
+                            1:'BIGM_BIN',
+                            2:'SOS2',
+                            3:'CC',
+                            4:'DCC',
+                            5:'DLOG',
+                            6:'LOG',
+                            7:'MC',
+                            8:'INC',
+                            None:None}
+
+    model.translate_constr = {0:'UB',
+                              1:'LB',
+                              2:'EQ',
+                              None:None}
+
+    model.repn_DQ = repn_DQ
+    model.constr_DQ = constr_DQ
+
+    # Number of Breakpoints
+    def shift_bit_length(x):
+        """Computes the next power of two::
+        
+            (2^n)
+        """  
+        return (1<<(x-1).bit_length())
+
+    if repn_DQ == 5 or repn_DQ == 6:
+        PieceCnt_DQ = shift_bit_length(PieceCnt_DQ)-1  # -1 for next use
+        print("PieceCnt_DQ has been shifted to next (2^n)+1:", PieceCnt_DQ+2)
+
+    model.PieceCnt_DQ = PieceCnt_DQ
 
 
     ###########################################################################
@@ -752,8 +755,8 @@ def createModel(repn_DQ=3, constr_DQ=2, PieceCnt_DQ=10):
     def bpts_DQ_build(model, g):
         model.bpts_DQ[g] = []
         for i in range(int(model.PieceCnt_DQ+2)):
-                (model.bpts_DQ[g].append((i**(pe.value(model.func_factor_DQ))
-                / (model.PieceCnt_DQ+1)**(pe.value(model.func_factor_DQ)))
+                (model.bpts_DQ[g].append((i**(pe.value(model.func_factor_DQ[g]))
+                / (model.PieceCnt_DQ+1)**(pe.value(model.func_factor_DQ[g])))
                 * (model.z_ub[g]-model.z_lb[g]) + model.z_lb[g]))
     # The object model.BuildBpts_DQ is not refered to again;
     # the only goal is to trigger the action at build time
@@ -762,16 +765,16 @@ def createModel(repn_DQ=3, constr_DQ=2, PieceCnt_DQ=10):
     def Compute_DQ_sqrt_rule(model, g, x):
             return (sum(model.upsilon_ny[g, q] for q in model.Q)
                     * ((x - pe.value(model.z_DQ_lb[g]))**(
-                            1/pe.value(model.func_factor_DQ)))
+                            1/pe.value(model.func_factor_DQ[g])))
                     / ((pe.value(model.z_DQ_ub[g])
                     - pe.value(model.z_DQ_lb[g]))**(
-                            1/pe.value(model.func_factor_DQ)))
+                            1/pe.value(model.func_factor_DQ[g])))
                     + sum(model.upsilon_ny_invers[g, q] for q in model.Q)
                     * (1-((x - pe.value(model.z_DQ_lb[g]))**(
-                            1/pe.value(model.func_factor_DQ)))
+                            1/pe.value(model.func_factor_DQ[g])))
                     / ((pe.value(model.z_DQ_ub[g])
                     - pe.value(model.z_DQ_lb[g]))**(
-                            1/pe.value(model.func_factor_DQ)))) )
+                            1/pe.value(model.func_factor_DQ[g])))) )
     model.ComputePieces = pe.Piecewise(model.G, model.DQ, model.z,
                                        pw_pts=model.bpts_DQ,
                                        pw_repn=

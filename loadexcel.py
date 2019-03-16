@@ -285,7 +285,7 @@ class Dataset:
                 ["Q",       "unit_factor",              "r"             ],
                 ["Q",       "direction_normal",         "ny"            ],
                 ["Q",       "direction_invers",         "ny_invers"     ],
-                ["",        "",                         ""              ],
+                ["G",       "func_factor",              "func_factor_DQ"],
                 ]
             for translator in translate_all:
                 try:

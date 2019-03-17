@@ -75,8 +75,11 @@ def createModel(repn_DQ=3, constr_DQ=2, PieceCnt_DQ=10, func_factor_DQ=2, **kwar
     model.gamma_sum_zul     = pe.Param(default=1, domain=pe.NonNegativeIntegers, mutable=True)
     model.tau_sum_zul       = pe.Param(default=1, domain=pe.NonNegativeIntegers, mutable=True)
     model.DQ_ges_max        = pe.Param(default=float('inf'), domain=pe.NonNegativeReals, mutable=True)# TODO
+    model.DQ_ges_min        = pe.Param(default=0, domain=pe.NonNegativeReals, mutable=True)# TODO
     model.Costs_ges_max     = pe.Param(default=float('inf'), domain=pe.NonNegativeReals, mutable=True)  # TODO
-
+    model.Costs_ges_min     = pe.Param(default=0, domain=pe.NonNegativeReals, mutable=True)  # TODO
+    # model.Costs_ges_abs     = pe.Param(default=0, domain=pe.NonNegativeReals, mutable=True)
+    
     # Kombinationen
     model.kappa_ub          = pe.Param(model.G, model.J, default=0, domain=pe.Binary)
     model.beta_ub           = pe.Param(model.J, model.H, default=0, domain=pe.Binary)
@@ -819,18 +822,30 @@ def createModel(repn_DQ=3, constr_DQ=2, PieceCnt_DQ=10, func_factor_DQ=2, **kwar
 
 
     # Zielfunktion Kosten Formel
-    def Constrain_DQ_ges(model):
+    def Constrain_DQ_ges_max_rule(model):
         return model.DQ_ges <= model.DQ_ges_max
-    model.Constrain_DQ = pe.Constraint(rule=Constrain_DQ_ges)
+    model.Constrain_DQ_ges_max = pe.Constraint(rule=Constrain_DQ_ges_max_rule)
+    def Constrain_DQ_ges_min_rule(model):
+        return model.DQ_ges >= model.DQ_ges_min
+    model.Constrain_DQ_ges_min = pe.Constraint(rule=Constrain_DQ_ges_min_rule)
     #
     #def CostValue_rule(model):
     #    return model.Costs_ges
     #model.CostValue = pe.Objective(rule=CostValue_rule, sense=1)
 
 
-    def Constrain_Costs_ges(model):
+    def Constrain_Costs_ges_max_rule(model):
         return model.Costs_ges <= model.Costs_ges_max
-    model.Constrain_Costs = pe.Constraint(rule=Constrain_Costs_ges)
+    model.Constrain_Costs_ges_max = pe.Constraint(rule=Constrain_Costs_ges_max_rule)
+
+    def Constrain_Costs_ges_min_rule(model):
+        return model.Costs_ges >= model.Costs_ges_min
+    model.Constrain_Costs_ges_min = pe.Constraint(rule=Constrain_Costs_ges_min_rule)
+    # def Constrain_Costs_abs_rule(model):
+    #     if pe.value(model.Costs_ges_abs) is 0:
+    #         pe.Constraint.Skip
+    #     return model.Costs_ges == model.Costs_ges_abs
+    # model.Constrain_Costs_abs = pe.Constraint(rule=Constrain_Costs_abs_rule)
     #
     ## Zielfunktion Datenqualität Formel
     #def DQValue_rule(model):

@@ -17,6 +17,11 @@ from defandsave import savedata
 from excelread import deep_merge
 import time
 import textwrap
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+from progressbar import ProgressBar
+
 
 logger = logging.getLogger('pyomo_script')
 
@@ -24,9 +29,9 @@ logger = logging.getLogger('pyomo_script')
 
 class SolverInstance:
     """Creates a Solver Instance.
-    
+
     Parameters:
-        
+
         solver_name :: string
             Defines the used Solver.
             For possible solvers use the ``helpSolvers()`` method.
@@ -34,11 +39,11 @@ class SolverInstance:
             Imported model-file/module
         model_properties :: {}
             See ``buildModel()`` for possible keywords.
-        datafile :: string 
+        datafile :: string
             Excel file. ``databaseX.xlsm``
         live_output :: True/(False)
             Enables output. False for clean run without any feedback.
-    
+
     List of supported Solvers:
         - cbc_local
         - cbc_neos
@@ -53,12 +58,12 @@ class SolverInstance:
         - glpk_local
         - glpk_neos
     """
-    def __init__(self, 
-                 solver_name="cbc_local", 
-                 live_output = True, 
-                 model_module=model_MINLP, 
+    def __init__(self,
+                 solver_name="cbc_local",
+                 live_output = True,
+                 model_module=model_MINLP,
                  model_properties={},
-                 datafile="Database5.xlsm", **kwargs):  
+                 datafile="Database5.xlsm", **kwargs):
         """Set solver (``default="cbc_local"``) and properties.
         """
 
@@ -273,11 +278,355 @@ class SolverInstance:
                   time.time()-start_instance)
         print("Time:", time.time()-start)
 
-    def epsilonConstrainedMethod(self):  # TODO
-        """Set steps for epsilon."""
-        pass
+    def descendingStepMethod(self, min_step, time_constr=None, clean=True,
+                                 plot_this=True, mintomax=False,
+                                 epsilon_min=None, epsilon_max=None,
+                                 solveInstanceOptions={}):  # TODO
+        """Set steps for epsilon.
 
-###############################################################################
+        To access generated Points use ``self.DSM_Points``.
+        """
+        live_output_state = self.live_output
+        self.live_output = False
+        
+        clean_state = self.clean
+        self.clean = True
+        
+        if min_step <= 0:
+            raise ValueError('min_step as to be greater than zero!')
+
+
+
+        if time_constr is not None:
+            if self.solver_name.startswith("cplex"):
+                self.setSolverOptions(timelimit=time_constr)
+            if self.solver_name.startswith("cbc"):
+                self.setSolverOptions(timelimit=time_constr)
+
+        self.DSM_Points = []
+
+        plotname_list = ["descending_step", "step({})".format(min_step)]
+        if mintomax:
+            plotname_list.append("min-max")
+        else:
+            plotname_list.append("max-min")
+        if epsilon_min is not None:
+            plotname_list.append("emin({})".format(epsilon_min))
+        if epsilon_max is not None:
+            plotname_list.append("emax({})".format(epsilon_max))
+        if time_constr is not None:
+            plotname_list.append("time({}sec)".format(time_constr))
+
+        plot_name = ("_").join(plotname_list)
+
+
+        if epsilon_min is None:
+            self.solveInstance(u=1, **solveInstanceOptions)
+            self.epsilon_min = self.solved_instance.Costs_ges()
+        else:
+            # this needs to be going into a different direction
+            # a Cost_ges_min needs to be specified?
+            self.epsilon_min = epsilon_min  # TODO
+            self.solveInstance(u=0, Costs_ges_max=self.epsilon_min, **solveInstanceOptions)
+        result_min = self.solved_instance.DQ_ges()
+
+        if epsilon_max is None:
+            self.solveInstance(u=0, **solveInstanceOptions)
+            self.epsilon_max = self.solved_instance.Costs_ges()
+        else:
+            self.epsilon_max = epsilon_max
+            self.solveInstance(u=0, Costs_ges_max=self.epsilon_max, **solveInstanceOptions)
+        result_max = self.solved_instance.DQ_ges()
+
+
+        if mintomax:  # !!! This part generates shitty solutions
+            epsilon = self.epsilon_min
+            current_result = result_min
+            print("\n# Solving from", self.epsilon_min, "to", self.epsilon_max)
+            print("# Minimal step =", min_step)
+
+            pbar = ProgressBar(min_value=self.epsilon_min,
+                               max_value=self.epsilon_max,
+                               initial_value=self.epsilon_min).start()
+
+            while epsilon + min_step < self.epsilon_max:
+                epsilon += min_step
+                self.solveInstance(u=0, Costs_ges_max=epsilon, **solveInstanceOptions)
+                new_epsilon = self.solved_instance.Costs_ges()
+                new_result = self.solved_instance.DQ_ges()
+                if new_result >= current_result:
+
+                    current_result = new_result
+                    self.DSM_Points.append([new_epsilon, current_result])
+
+                pbar.update(value=epsilon)
+            pbar.finish()
+
+        if not mintomax:
+            epsilon = self.epsilon_max
+            current_result = result_max
+            print("\n# Solving from", self.epsilon_max, "to", self.epsilon_min)
+            print("# Minimal step =", min_step)
+
+            pbar = ProgressBar(min_value=self.epsilon_min,
+                               max_value=self.epsilon_max,
+                               initial_value=self.epsilon_max).start()
+
+            while epsilon > self.epsilon_min:
+                self.solveInstance(u=0, Costs_ges_max=epsilon, **solveInstanceOptions)
+                new_epsilon = self.solved_instance.Costs_ges()
+                new_result = self.solved_instance.DQ_ges()
+                if current_result >= new_result:
+
+                    current_result = new_result
+                    self.DSM_Points.append([new_epsilon, current_result])
+
+                pbar.update(value=epsilon)
+
+                epsilon = new_epsilon - min_step  # minus!
+
+            pbar.finish()
+        
+        # Postprocess
+        self.live_output = live_output_state
+        self.clean = clean_state
+        
+        if plot_this:
+            self.pareto_plot(self.DSM_Points, filename=plot_name)
+
+    def adBEConstMethod(self, n_p=100, x_tol = 0.01, y_tol=1e-10, n1_max=100, 
+                        b_max=10, solveInstanceOptions={},  plot_this=True, 
+                        log=False, x_max=float('inf'), y_min=0):
+
+        """Adaptive bisection :math:`\\varepsilon`-constraint method.
+        
+        To access generated Points use ``self.ABE_Points``.
+        
+        ***********
+        Parameters
+        ***********
+        
+        :param n_p: (:const:`int=100`)
+            Number of generated Points
+        :param x_tol: (:const:`float=0.01`)
+            x-tolerance
+        :param y_tol: (:const:`float=1e-10`)
+            y-tolerance
+        :param n1_max: (:const:`int=100`)
+            Number of maximum iterations before a segment is ignored.
+        :param b_max: (:const:`int=10`)
+            Number of maximum ignored segments.
+        :param x_max: (:const:`float=float('inf')`)
+            Maximum x value.
+        :param y_min: (:const:`float=0`)
+            Maximum y value.
+        :param solveInstanceOptions: (:const:`dict={}`) 
+            Additional Options for ``solveInstance()``
+        :param plot_this: (:const:`boolean=True`)
+            Plot generated data after completition.
+        :param log: (:const:`boolean=False`)
+            Log every algorithm-step.
+        """
+        
+        from operator import itemgetter
+        def log(*args):
+            if log:
+                print(*args)
+
+        #Start
+        live_output_state = self.live_output
+        self.live_output = False
+        clean_state = self.clean
+        self.clean = True
+
+        results = []
+        points_used = {}
+
+        plotname_list = ["adBisecEpsil", "points({})".format(n_p)]
+        plotname_list.append("x_tol({})".format(x_tol))
+        plotname_list.append("y_tol({})".format(y_tol))
+        plotname_list.append("n1({})".format(n1_max))
+        plotname_list.append("b({})".format(b_max))
+
+        plot_name = ("_").join(plotname_list)
+
+        # Find anchor points
+        self.solveInstance(u=1, DQ_ges_min=y_min, **solveInstanceOptions)
+        self.mu1opt = self.solved_instance.DQ_ges()
+        y1 = self.solved_instance.DQ_ges()
+        x1 = self.solved_instance.Costs_ges()
+        results.append((x1, y1))
+
+        self.solveInstance(u=0, Costs_ges_max=x_max, **solveInstanceOptions)
+        self.mu2opt = self.solved_instance.Costs_ges()
+        y2 = self.solved_instance.DQ_ges()
+        x2 = self.solved_instance.Costs_ges()
+        results.append((x2, y2))
+
+        # Add entry points_used array with x and y
+        # coordinates of anchor points and n1 = 1
+        points_used = [(x1, y1, x2, y2)]
+        n1 = 1
+        
+        n = 2  # Two solutions already exist.
+        
+        # Compute espilons
+        def get_e_ub(n1,x1,x2):  # compute upper bound. 1/2, 3/4, 7/8
+            return x2 - (x2-x1)/(2**n1)
+        def get_e_lb(y1):
+            return y1
+        b = 1
+        while True:
+            if b > b_max+1:
+                print("\nMaximum number of ignored segments reached.")
+                break
+            
+            if n1 > n1_max:
+                log("n1 =",n1)
+                log("maximum number of iterations exeeded")
+                
+                b += 1
+                log("now searching for "+str(b)+". highest distance")
+                continue
+            log("\n")
+            log("using points:", points_used[-1])
+            e_ub = get_e_ub(n1, points_used[-1][0], points_used[-1][2])
+            e_lb = get_e_lb(points_used[-1][1])
+
+            # Is the smallest tolerance gap reached?
+            log("gap:", points_used[-1][2]-e_ub)
+            
+            if points_used[-1][2]-e_ub <= x_tol: # Yes -> Stop
+                log("Tolerance limit exceeded.")
+                b += 1
+                log("now searching for "+str(b)+". highest distance")
+                continue
+
+            # Solve Optimization Problem
+            self.solveInstance(u=0, DQ_ges_min=e_lb, Costs_ges_max=e_ub, **solveInstanceOptions)
+
+            # Is a feassible solution found?
+            if self.solved_instance.DQ_ges() is None:  # No
+                # Widen the search range. (1/2 -> 3/4 -> 7/8 -> ...)
+                n1 += 1
+                log("n1 =",n1)
+                continue
+            x = self.solved_instance.Costs_ges()
+            y = self.solved_instance.DQ_ges()
+
+            # Add new entry to results array.
+            results.append((x, y))
+            log("new result:", (x, y))
+            
+            # Sort the results array in descending order of the x column
+            results.sort()  # sorts by 1st column (x)
+            
+            # Have n_p points been reached?
+            if n == n_p:  # Yes -> Stop
+                print("\nMaximum number of points reached!")
+                break
+            
+            # Calculate the euclidian distance between
+            # successive rows in the results array.
+            distances = np.diff(results, axis=0)  # Compute delta(x,y)
+            segdists = np.sqrt((distances ** 2).sum(axis=1))  # Compute euclidian distance
+            def getIndices(a, n):
+                # M = a.shape[0]
+                # perc = (np.arange(M-n,M)+1.0)/M*100
+                # return np.percentile(a,perc)[::-1]
+                return np.argpartition(a, -n)[-n:][::-1]
+            
+            index_max = getIndices(segdists, b)[-1]  # Identify maximum distance index
+            # log("distance:",segdists[index_max])
+            
+            # Identify corresponding points
+            new_points = results[index_max] + results[index_max+1]
+            
+            # Are the points existent in a single row of the points_used array?
+            if new_points[3]-new_points[1] < y_tol:
+                b += 1
+                log("now searching for "+str(b)+". highest distance")
+                continue
+            
+            if new_points in points_used:
+                log("new points:", new_points, "already used..")
+                n1 += 1
+                log("n1 =",n1)
+                continue
+
+            # Add entry to points_used array and set n1 = 1
+            points_used.append(new_points)
+            log("new points appended:", new_points)
+            n1 = 1
+            
+        # Postprocess
+        self.ABE_Points = results
+        self.live_output = live_output_state
+        self.clean = clean_state
+
+        if plot_this:
+            self.pareto_plot(self.ABE_Points, filename=plot_name)
+
+    # Compute nondominated Points
+    @staticmethod
+    def is_pareto(all_points):
+        """Masks pareto efficient Points.
+        
+        :param all_points: An (n_points, n_all_points) array
+        
+        :return: A (n_points, ) boolean array, indicating whether each point is Pareto efficient
+        """
+        is_efficient = np.ones(all_points.shape[0], dtype = bool)
+        print(is_efficient)
+        for i, c in enumerate(all_points):
+            print(i, c)
+            if is_efficient[i]:
+                # custom fit for this use case
+                is_efficient[is_efficient] = np.any( 
+                        all_points[is_efficient][0]<=c[0], axis=0) and np.any(
+                        all_points[is_efficient][1]>=c[1], axis=0) # Remove dominated points
+        return is_efficient
+
+    def pareto_plot(self, plot_data, filename="", save_all=False):
+
+        scatter_data = np.sort(plot_data, axis=0)
+
+        x = scatter_data[:,0]
+        y = scatter_data[:,1]
+        ub_x = max(x)*1.02
+        lb_x = min(x)*0.98
+        ub_y = min(1, max(y)*1.1)
+        lb_y = max(0, min(y)*0.9)
+        
+
+        
+        pareto_front = scatter_data[self.is_pareto(scatter_data)]
+        x2 = pareto_front[:,0]
+        y2 = pareto_front[:,1]
+        
+        fig, ax1 = plt.subplots(nrows=1, ncols=1,
+                                       figsize=(6, 4))
+
+        ax1.plot(x2, y2,zorder=1)
+        
+        ax1.scatter(x=x, y=y, marker='o', c='r', edgecolor='b',zorder=2)
+
+        ax1.set_title('Pareto Plot')
+        ax1.set_yscale("linear")
+        ax1.set_xscale("linear")
+        ax1.set_xlabel('$Kosten$')
+        ax1.set_ylabel('$Qualität$')
+        ax1.set_xlim([lb_x, ub_x])
+        ax1.set_ylim([lb_y, ub_y])
+        ax1.invert_yaxis()
+
+        plt.show()
+
+        if not self.clean or save_all:
+            os.makedirs("plots", exist_ok = True)
+            fig.savefig(os.path.join("plots","plot_"+filename+".png"))
+            fig.savefig(os.path.join("plots","plot_"+filename+".pdf"), format="pdf") # save the figure to file
+        plt.close(fig)
 
     def loadData(self, filename):
         """Loads the data from an excel-file a dict.
@@ -292,14 +641,14 @@ class SolverInstance:
         if not self.clean:
             print("\nData successfully loaded.\n")
             savedata(self.data, "input_data", "logs/input_data", human=True)
-    
+
     def addData(self, **kwargs):
         """Adds data to the loaded ``self.data`` variable.
-        
+
         Usage::
-            
+
             addData('func_factor_DQ'={5: 9})
-            
+
         """
         for key, value in kwargs.items():
             if type(value) is dict:
@@ -307,53 +656,53 @@ class SolverInstance:
             else:
                 self.data[None].update({key: {None: value}})
 
-    
+
     def printModel(self):
         self.model.pprint()
 
-    def updateResults(self, result_dict):
+    def updateResults(self, r_dict):
         try:
-            self.results.update(result_dict)
+            self.results.update(r_dict)
         except AttributeError:
-            self.results = result_dict
+            self.results = r_dict
 
     def getResults(self):
         for inst_name_, result_ in self.results.items():
             print("Results for "+inst_name_)
             result_.write()
-    
+
     def buildModel(self, **kwargs):
         """Builds the model with given ``**kwargs``
-        
+
         Parameters
         ----------
         repn_DQ: :const:`int=3`
             Representation of the piecewise function for DataQualities::
-            
+
                 0: BIGM_SOS1,   5: DLOG,
                 1: BIGM_BIN,    6: LOG,
                 2: SOS2,        7: MC,
                 3: CC,          8: INC,
                 4: DCC,      None: None
-    
+
         constr_DQ: :const:`int=2`
             Constraint method::
-                
+
                 0: UB,          2: EQ,
                 1: LB,       None: None
-                
+
         PieceCnt_DQ: :const:`int=10`
             Piecewise section count.
-            
+
         func_factor_DQ: :const:`int=2`
             Sets the power ``**(1/func_factor_DQ)`` to the calculation function :py:func:`Compute_DQ_rule`.
-            
+
         kwargs:
             Add additional Values. (Currently unused.)
         """
-        
+
         self.model = self.model_module.createModel(**kwargs)
-        
+
     def solveGeneratedInstance(self, instance, inst_name):
         # Nutze Solver Manager None/string
         if self.solver_manager_name is not None:
@@ -365,11 +714,11 @@ class SolverInstance:
                                         executable=self.EXE_path)
                 # Solve the instance :: Clean gets no Logs
                 if not self.clean:
-                    result = solver_manager.solve(instance, opt=opt,
+                    self.result = solver_manager.solve(instance, opt=opt,
                                                   tee=self.tee,
                                                   logfile=inst_name+".log")
                 else:
-                    result = solver_manager.solve(instance, opt=opt,
+                    self.result = solver_manager.solve(instance, opt=opt,
                                                   tee=self.tee,)
         else:
             path_log = ["logs", "logfiles", inst_name+".log"]
@@ -386,12 +735,12 @@ class SolverInstance:
 
                     # Solve the instance :: Clean gets no Logs
                     if not self.clean:
-                        result = opt.solve(instance, tee=self.tee,
+                        self.result = opt.solve(instance, tee=self.tee,
                                            symbolic_solver_labels=
                                            self.symbolic_solver_labels,
                                            logfile=os.path.join(*path_log))
                     else:
-                        result = opt.solve(instance, tee=self.tee,
+                        self.result = opt.solve(instance, tee=self.tee,
                                            symbolic_solver_labels=
                                            self.symbolic_solver_labels)
             else:
@@ -407,18 +756,18 @@ class SolverInstance:
 
                     # Solve the instance :: Clean gets no Logs
                     if not self.clean:
-                        result = opt.solve(instance, tee=self.tee,
+                        self.result = opt.solve(instance, tee=self.tee,
                                            symbolic_solver_labels=
                                            self.symbolic_solver_labels,
                                            logfile=os.path.join(*path_log))
                     else:
-                        result = opt.solve(instance, tee=self.tee,
+                        self.result = opt.solve(instance, tee=self.tee,
                                            symbolic_solver_labels=
                                            self.symbolic_solver_labels)
-        self.updateResults({inst_name: result})
+        self.updateResults({inst_name: self.result})
 
         return instance
-    
+
     def solveInstance(self, **kwargs):
         """Generates an Instance of the given model and invokes the Solver.
         All attributes of the instance can be modified via given
@@ -432,8 +781,8 @@ class SolverInstance:
             DQ_ges_max
                 Sets minimum required Data-Quality.
         """
-        allowed_keys = ["u", "DQ_ges_max", "Costs_ges_max", "n",
-                        "DQ_func_type", "R_J_func_type"]
+        allowed_keys = ["u", "DQ_ges_max", "DQ_ges_min", "Costs_ges_max", "Costs_ges_min", 
+                        "n", "DQ_func_type", "R_J_func_type"]
         allowed_keys.sort()
 
         # Build Instance Name
@@ -457,17 +806,17 @@ class SolverInstance:
                     self.instance.__setattr__(key, value)
             else:
                 warning_str = ('''
-                               KEYWORD WARNING: "{0}" = {1} is not allowed. 
+                               KEYWORD WARNING: "{0}" = {1} is not allowed.
                                Allowed Keys are: "{2}" and "{3}".
-                               '''.format(key, value, 
-                                          '", "'.join(allowed_keys[:-1]), 
+                               '''.format(key, value,
+                                          '", "'.join(allowed_keys[:-1]),
                                           allowed_keys[-1]))
                 logger.warning(textwrap.dedent(warning_str))
                 if value is not None:
                     self.instance.__setattr__(key, value)
-        
 
-        
+
+
         # Write generated Model-Instance
         if not self.clean:
             path_generated = ["logs", "generated_model_instances",
@@ -499,22 +848,8 @@ class SolverInstance:
         # Output Objective Values
         if self.live_output:
             print("CombObjective for {0}: {1:12.2f}"
-                  .format(inst_name, self.instance.CombinedValue()))
+                  .format(inst_name, self.solved_instance.CombinedValue()))
             print("           DQ_ges: {1:12.7f}"
-                  .format(inst_name, self.instance.DQ_ges()))
+                  .format(inst_name, self.solved_instance.DQ_ges()))
             print("        Costs_ges: {1:12.2f}"
-                  .format(inst_name, self.instance.Costs_ges()))
-
-
-if __name__ == "__main__":
-    sol = SolverInstance(solver_name="cbc_local",
-                         tee=False,
-                         keep_files=False,
-                         create_LP_files=False,
-                         clean=False)
-    sol.addData(func_factor_DQ={3: 9})
-
-    
-    sol.buildModel(repn_DQ=5, func_factor_DQ=2)
-    
-    sol.solveInstance(u=0.99 , Costs_ges_max=None, n=1)
+                  .format(inst_name, self.solved_instance.Costs_ges()))

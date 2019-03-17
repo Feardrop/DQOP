@@ -17,6 +17,9 @@ from defandsave import savedata
 from excelread import deep_merge
 import time
 import textwrap
+import numpy as np
+import os
+from progressbar import ProgressBar
 
 logger = logging.getLogger('pyomo_script')
 
@@ -273,9 +276,121 @@ class SolverInstance:
                   time.time()-start_instance)
         print("Time:", time.time()-start)
 
-    def epsilonConstrainedMethod(self):  # TODO
-        """Set steps for epsilon."""
-        pass
+    def descendingStepMethod(self, min_step, time_constr=None, clean=True,
+                                 plot_this=True, mintomax=False,
+                                 epsilon_min=None, epsilon_max=None,
+                                 solveInstanceOptions={}):  # TODO
+        """Set steps for epsilon.
+
+        To access generated Points use ``self.DSM_Points``.
+        """
+        live_output_state = self.live_output
+        self.live_output = False
+        
+        clean_state = self.clean
+        self.clean = True
+        
+        if min_step <= 0:
+            raise ValueError('min_step as to be greater than zero!')
+
+
+
+        if time_constr is not None:
+            if self.solver_name.startswith("cplex"):
+                self.setSolverOptions(timelimit=time_constr)
+            if self.solver_name.startswith("cbc"):
+                self.setSolverOptions(timelimit=time_constr)
+
+        self.DSM_Points = []
+
+        plotname_list = ["descending_step", "step({})".format(min_step)]
+        if mintomax:
+            plotname_list.append("min-max")
+        else:
+            plotname_list.append("max-min")
+        if epsilon_min is not None:
+            plotname_list.append("emin({})".format(epsilon_min))
+        if epsilon_max is not None:
+            plotname_list.append("emax({})".format(epsilon_max))
+        if time_constr is not None:
+            plotname_list.append("time({}sec)".format(time_constr))
+
+        plot_name = ("_").join(plotname_list)
+
+
+        if epsilon_min is None:
+            self.solveInstance(u=1, **solveInstanceOptions)
+            self.epsilon_min = self.solved_instance.Costs_ges()
+        else:
+            # this needs to be going into a different direction
+            # a Cost_ges_min needs to be specified?
+            self.epsilon_min = epsilon_min  # TODO
+            self.solveInstance(u=0, Costs_ges_max=self.epsilon_min, **solveInstanceOptions)
+        result_min = self.solved_instance.DQ_ges()
+
+        if epsilon_max is None:
+            self.solveInstance(u=0, **solveInstanceOptions)
+            self.epsilon_max = self.solved_instance.Costs_ges()
+        else:
+            self.epsilon_max = epsilon_max
+            self.solveInstance(u=0, Costs_ges_max=self.epsilon_max, **solveInstanceOptions)
+        result_max = self.solved_instance.DQ_ges()
+
+
+        if mintomax:  # !!! This part generates shitty solutions
+            epsilon = self.epsilon_min
+            current_result = result_min
+            print("\n# Solving from", self.epsilon_min, "to", self.epsilon_max)
+            print("# Minimal step =", min_step)
+
+            pbar = ProgressBar(min_value=self.epsilon_min,
+                               max_value=self.epsilon_max,
+                               initial_value=self.epsilon_min).start()
+
+            while epsilon + min_step < self.epsilon_max:
+                epsilon += min_step
+                self.solveInstance(u=0, Costs_ges_max=epsilon, **solveInstanceOptions)
+                new_epsilon = self.solved_instance.Costs_ges()
+                new_result = self.solved_instance.DQ_ges()
+                if new_result >= current_result:
+
+                    current_result = new_result
+                    self.DSM_Points.append([new_epsilon, current_result])
+
+                pbar.update(value=epsilon)
+            pbar.finish()
+
+        if not mintomax:
+            epsilon = self.epsilon_max
+            current_result = result_max
+            print("\n# Solving from", self.epsilon_max, "to", self.epsilon_min)
+            print("# Minimal step =", min_step)
+
+            pbar = ProgressBar(min_value=self.epsilon_min,
+                               max_value=self.epsilon_max,
+                               initial_value=self.epsilon_max).start()
+
+            while epsilon > self.epsilon_min:
+                self.solveInstance(u=0, Costs_ges_max=epsilon, **solveInstanceOptions)
+                new_epsilon = self.solved_instance.Costs_ges()
+                new_result = self.solved_instance.DQ_ges()
+                if current_result >= new_result:
+
+                    current_result = new_result
+                    self.DSM_Points.append([new_epsilon, current_result])
+
+                pbar.update(value=epsilon)
+
+                epsilon = new_epsilon - min_step  # minus!
+
+            pbar.finish()
+        
+        # Postprocess
+        self.live_output = live_output_state
+        self.clean = clean_state
+        
+        if plot_this:
+            self.pareto_plot(self.DSM_Points, filename=plot_name)
 
     def loadData(self, filename):
         """Loads the data from an excel-file a dict.
@@ -430,8 +545,8 @@ class SolverInstance:
             DQ_ges_max
                 Sets minimum required Data-Quality.
         """
-        allowed_keys = ["u", "DQ_ges_max", "Costs_ges_max", "n",
-                        "DQ_func_type", "R_J_func_type"]
+        allowed_keys = ["u", "DQ_ges_max", "DQ_ges_min", "Costs_ges_max", "Costs_ges_min", 
+                        "n", "DQ_func_type", "R_J_func_type"]
         allowed_keys.sort()
 
         # Build Instance Name

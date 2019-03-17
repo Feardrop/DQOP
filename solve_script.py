@@ -17,9 +17,11 @@ from defandsave import savedata
 from excelread import deep_merge
 import time
 import textwrap
+import matplotlib.pyplot as plt
 import numpy as np
 import os
 from progressbar import ProgressBar
+
 
 logger = logging.getLogger('pyomo_script')
 
@@ -27,9 +29,9 @@ logger = logging.getLogger('pyomo_script')
 
 class SolverInstance:
     """Creates a Solver Instance.
-    
+
     Parameters:
-        
+
         solver_name :: string
             Defines the used Solver.
             For possible solvers use the ``helpSolvers()`` method.
@@ -37,11 +39,11 @@ class SolverInstance:
             Imported model-file/module
         model_properties :: {}
             See ``buildModel()`` for possible keywords.
-        datafile :: string 
+        datafile :: string
             Excel file. ``databaseX.xlsm``
         live_output :: True/(False)
             Enables output. False for clean run without any feedback.
-    
+
     List of supported Solvers:
         - cbc_local
         - cbc_neos
@@ -56,12 +58,12 @@ class SolverInstance:
         - glpk_local
         - glpk_neos
     """
-    def __init__(self, 
-                 solver_name="cbc_local", 
-                 live_output = True, 
-                 model_module=model_MINLP, 
+    def __init__(self,
+                 solver_name="cbc_local",
+                 live_output = True,
+                 model_module=model_MINLP,
                  model_properties={},
-                 datafile="Database5.xlsm", **kwargs):  
+                 datafile="Database5.xlsm", **kwargs):
         """Set solver (``default="cbc_local"``) and properties.
         """
 
@@ -584,6 +586,48 @@ class SolverInstance:
                         all_points[is_efficient][0]<=c[0], axis=0) and np.any(
                         all_points[is_efficient][1]>=c[1], axis=0) # Remove dominated points
         return is_efficient
+
+    def pareto_plot(self, plot_data, filename="", save_all=False):
+
+        scatter_data = np.sort(plot_data, axis=0)
+
+        x = scatter_data[:,0]
+        y = scatter_data[:,1]
+        ub_x = max(x)*1.02
+        lb_x = min(x)*0.98
+        ub_y = min(1, max(y)*1.1)
+        lb_y = max(0, min(y)*0.9)
+        
+
+        
+        pareto_front = scatter_data[self.is_pareto(scatter_data)]
+        x2 = pareto_front[:,0]
+        y2 = pareto_front[:,1]
+        
+        fig, ax1 = plt.subplots(nrows=1, ncols=1,
+                                       figsize=(6, 4))
+
+        ax1.plot(x2, y2,zorder=1)
+        
+        ax1.scatter(x=x, y=y, marker='o', c='r', edgecolor='b',zorder=2)
+
+        ax1.set_title('Pareto Plot')
+        ax1.set_yscale("linear")
+        ax1.set_xscale("linear")
+        ax1.set_xlabel('$Kosten$')
+        ax1.set_ylabel('$Qualität$')
+        ax1.set_xlim([lb_x, ub_x])
+        ax1.set_ylim([lb_y, ub_y])
+        ax1.invert_yaxis()
+
+        plt.show()
+
+        if not self.clean or save_all:
+            os.makedirs("plots", exist_ok = True)
+            fig.savefig(os.path.join("plots","plot_"+filename+".png"))
+            fig.savefig(os.path.join("plots","plot_"+filename+".pdf"), format="pdf") # save the figure to file
+        plt.close(fig)
+
     def loadData(self, filename):
         """Loads the data from an excel-file a dict.
 
@@ -597,14 +641,14 @@ class SolverInstance:
         if not self.clean:
             print("\nData successfully loaded.\n")
             savedata(self.data, "input_data", "logs/input_data", human=True)
-    
+
     def addData(self, **kwargs):
         """Adds data to the loaded ``self.data`` variable.
-        
+
         Usage::
-            
+
             addData('func_factor_DQ'={5: 9})
-            
+
         """
         for key, value in kwargs.items():
             if type(value) is dict:
@@ -612,7 +656,7 @@ class SolverInstance:
             else:
                 self.data[None].update({key: {None: value}})
 
-    
+
     def printModel(self):
         self.model.pprint()
 
@@ -626,39 +670,39 @@ class SolverInstance:
         for inst_name_, result_ in self.results.items():
             print("Results for "+inst_name_)
             result_.write()
-    
+
     def buildModel(self, **kwargs):
         """Builds the model with given ``**kwargs``
-        
+
         Parameters
         ----------
         repn_DQ: :const:`int=3`
             Representation of the piecewise function for DataQualities::
-            
+
                 0: BIGM_SOS1,   5: DLOG,
                 1: BIGM_BIN,    6: LOG,
                 2: SOS2,        7: MC,
                 3: CC,          8: INC,
                 4: DCC,      None: None
-    
+
         constr_DQ: :const:`int=2`
             Constraint method::
-                
+
                 0: UB,          2: EQ,
                 1: LB,       None: None
-                
+
         PieceCnt_DQ: :const:`int=10`
             Piecewise section count.
-            
+
         func_factor_DQ: :const:`int=2`
             Sets the power ``**(1/func_factor_DQ)`` to the calculation function :py:func:`Compute_DQ_rule`.
-            
+
         kwargs:
             Add additional Values. (Currently unused.)
         """
-        
+
         self.model = self.model_module.createModel(**kwargs)
-        
+
     def solveGeneratedInstance(self, instance, inst_name):
         # Nutze Solver Manager None/string
         if self.solver_manager_name is not None:
@@ -723,7 +767,7 @@ class SolverInstance:
         self.updateResults({inst_name: self.result})
 
         return instance
-    
+
     def solveInstance(self, **kwargs):
         """Generates an Instance of the given model and invokes the Solver.
         All attributes of the instance can be modified via given
@@ -762,17 +806,17 @@ class SolverInstance:
                     self.instance.__setattr__(key, value)
             else:
                 warning_str = ('''
-                               KEYWORD WARNING: "{0}" = {1} is not allowed. 
+                               KEYWORD WARNING: "{0}" = {1} is not allowed.
                                Allowed Keys are: "{2}" and "{3}".
-                               '''.format(key, value, 
-                                          '", "'.join(allowed_keys[:-1]), 
+                               '''.format(key, value,
+                                          '", "'.join(allowed_keys[:-1]),
                                           allowed_keys[-1]))
                 logger.warning(textwrap.dedent(warning_str))
                 if value is not None:
                     self.instance.__setattr__(key, value)
-        
 
-        
+
+
         # Write generated Model-Instance
         if not self.clean:
             path_generated = ["logs", "generated_model_instances",

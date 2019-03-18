@@ -74,8 +74,8 @@ def createModel(repn_DQ=3, constr_DQ=2, PieceCnt_DQ=10, func_factor_DQ=2, **kwar
     model.delta_sum_zul     = pe.Param(default=1, domain=pe.NonNegativeIntegers, mutable=True)
     model.gamma_sum_zul     = pe.Param(default=1, domain=pe.NonNegativeIntegers, mutable=True)
     model.tau_sum_zul       = pe.Param(default=1, domain=pe.NonNegativeIntegers, mutable=True)
-    model.DQ_ges_max        = pe.Param(default=float('inf'), domain=pe.NonNegativeReals, mutable=True)# TODO
-    model.DQ_ges_min        = pe.Param(default=0, domain=pe.NonNegativeReals, mutable=True)# TODO
+    model.DQ_ges_max        = pe.Param(default=1, domain=pe.PercentFraction, mutable=True)# TODO
+    model.DQ_ges_min        = pe.Param(default=0, domain=pe.PercentFraction, mutable=True)# TODO
     model.Costs_ges_max     = pe.Param(default=float('inf'), domain=pe.NonNegativeReals, mutable=True)  # TODO
     model.Costs_ges_min     = pe.Param(default=0, domain=pe.NonNegativeReals, mutable=True)  # TODO
     # model.Costs_ges_abs     = pe.Param(default=0, domain=pe.NonNegativeReals, mutable=True)

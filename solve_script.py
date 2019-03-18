@@ -567,6 +567,7 @@ class SolverInstance:
         if plot_this:
             self.pareto_plot(self.ABE_Points, filename=plot_name)
 
+
     # Compute nondominated Points
     @staticmethod
     def is_pareto(all_points):
@@ -577,9 +578,7 @@ class SolverInstance:
         :return: A (n_points, ) boolean array, indicating whether each point is Pareto efficient
         """
         is_efficient = np.ones(all_points.shape[0], dtype = bool)
-        print(is_efficient)
         for i, c in enumerate(all_points):
-            print(i, c)
             if is_efficient[i]:
                 # custom fit for this use case
                 is_efficient[is_efficient] = np.any( 
@@ -587,31 +586,46 @@ class SolverInstance:
                         all_points[is_efficient][1]>=c[1], axis=0) # Remove dominated points
         return is_efficient
 
-    def pareto_plot(self, plot_data, filename="", save_all=False):
-
-        scatter_data = np.sort(plot_data, axis=0)
-
-        x = scatter_data[:,0]
-        y = scatter_data[:,1]
-        ub_x = max(x)*1.02
-        lb_x = min(x)*0.98
-        ub_y = min(1, max(y)*1.1)
-        lb_y = max(0, min(y)*0.9)
-        
-
-        
-        pareto_front = scatter_data[self.is_pareto(scatter_data)]
-        x2 = pareto_front[:,0]
-        y2 = pareto_front[:,1]
+    @classmethod
+    def pareto_plot(self, *plot_data_arrays, filename="", save_all=False,
+                    plot_scatter=True, plot_pareto_front=True,
+                    lb_x = None, ub_x = None,
+                    lb_y = None, ub_y = None):
         
         fig, ax1 = plt.subplots(nrows=1, ncols=1,
                                        figsize=(6, 4))
-
-        ax1.plot(x2, y2,zorder=1)
         
-        ax1.scatter(x=x, y=y, marker='o', c='r', edgecolor='b',zorder=2)
+        # Initialize lists for boundaries
+        ub_x_max, lb_x_min, ub_y_max, lb_y_min = ([] for _ in range(4))
+        
+        # Plot multiple graphs
+        for plot_data in plot_data_arrays:
+            scatter_data = np.sort(plot_data, axis=0)
+            x = scatter_data[:,0]
+            y = scatter_data[:,1]
+            
+            # Fill boundary_lists
+            ub_x_max.append(max(x)*1.02)
+            lb_x_min.append(min(x)*0.98)
+            ub_y_max.append(min(1, max(y)*1.1))
+            lb_y_min.append(max(0, min(y)*0.9))
+    
 
-        ax1.set_title('Pareto Plot')
+            if len(scatter_data) > 1 and plot_pareto_front:
+                pareto_front = scatter_data[self.is_pareto(scatter_data)]
+                x2 = pareto_front[:,0]
+                y2 = pareto_front[:,1]
+                ax1.plot(x2, y2,zorder=1)    
+            
+            if plot_scatter:
+                ax1.scatter(x=x, y=y, marker='x')#, c='r', edgecolor='b',zorder=2)
+            
+        ub_x = ub_x or max(ub_x_max)
+        lb_x = lb_x or min(lb_x_min)
+        ub_y = ub_y or max(ub_y_max)
+        lb_y = lb_y or min(lb_y_min)
+            
+        ax1.set_title('Pareto Plot: '+filename)
         ax1.set_yscale("linear")
         ax1.set_xscale("linear")
         ax1.set_xlabel('$Kosten$')

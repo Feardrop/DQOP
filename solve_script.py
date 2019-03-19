@@ -21,6 +21,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 from progressbar import ProgressBar
+from pprint import pprint
 
 
 logger = logging.getLogger('pyomo_script')
@@ -218,7 +219,9 @@ class SolverInstance:
                       keep_files=False,  # True prints intermediate file names
                       create_LP_files=False,
                       create_NL_files=False,
-                      clean=False):
+                      clean=False,
+                      load_solutions=True,
+                      gap_tol=None):
         """Sets Properties for the solving process."""
         self.symbolic_solver_labels = symbolic_solver_labels
         self.tee = tee
@@ -226,16 +229,20 @@ class SolverInstance:
         self.create_LP_files = create_LP_files
         self.create_NL_files = create_NL_files
         self.clean = clean
-
+        self.load_solutions = load_solutions
+        self.gap_tol = gap_tol or float('inf')
+        
     def getProperties(self):
         """Prints all current properties."""
         print("\n############# Current properties: ##############")
-        print("# symbolic_solver_labels:",   self.symbolic_solver_labels)
-        print("# tee (live log):        ",   self.tee)
-        print("# keep_files:            ",   self.keep_files)
-        print("# create_LP_files:       ",   self.create_LP_files)
-        print("# create_NL_files:       ",   self.create_NL_files)
-        print("# clean (no files):      ",   self.clean)
+        print("# symbolic_solver_labels: ",   self.symbolic_solver_labels)
+        print("# tee (live log):         ",   self.tee)
+        print("# keep_files:             ",   self.keep_files)
+        print("# create_LP_files:        ",   self.create_LP_files)
+        print("# create_NL_files:        ",   self.create_NL_files)
+        print("# clean (no files):       ",   self.clean)
+        print("# load_solutions (getgap):",   self.load_solutions)
+        print("# gap_tol(erance):        ",   self.gap_tol)
         print("#\n# To manipulate properties use setProperties().")
         print("################################################\n")
 ###############################################################################
@@ -353,11 +360,13 @@ class SolverInstance:
                     # Solve the instance :: Clean gets no Logs
                     if not self.clean:
                         self.result = opt.solve(instance, tee=self.tee,
+                                           load_solutions=self.load_solutions,
                                            symbolic_solver_labels=
                                            self.symbolic_solver_labels,
                                            logfile=os.path.join(*path_log))
                     else:
                         self.result = opt.solve(instance, tee=self.tee,
+                                           load_solutions=self.load_solutions,
                                            symbolic_solver_labels=
                                            self.symbolic_solver_labels)
             else:
@@ -374,13 +383,25 @@ class SolverInstance:
                     # Solve the instance :: Clean gets no Logs
                     if not self.clean:
                         self.result = opt.solve(instance, tee=self.tee,
+                                           load_solutions=self.load_solutions,
                                            symbolic_solver_labels=
                                            self.symbolic_solver_labels,
                                            logfile=os.path.join(*path_log))
                     else:
                         self.result = opt.solve(instance, tee=self.tee,
+                                           load_solutions=self.load_solutions,
                                            symbolic_solver_labels=
                                            self.symbolic_solver_labels)
+        
+        if not self.load_solutions:
+            if len(self.result.solution) > 0:
+                # you may need to relax these checks in certain cases
+                assert str(self.result.solver.status) == "ok"
+                assert str(self.result.solver.termination_condition) == "optimal"
+                self.absgap = self.result.solution(0).gap
+                # now load the solution
+                instance.solutions.load_from(self.result)
+                
         self.updateResults({inst_name: self.result})
 
         return instance
@@ -531,16 +552,21 @@ class SolverInstance:
         
         # Start
         results = []
+        
         def solve_u(j, **args):
             self.log("u =",j)
             try:
                 self.solveInstance(u=j, **{**args, **solveInstanceOptions})
                 x, y = self.solved_instance.Costs_ges(), self.solved_instance.DQ_ges()
+
                 new_result = (x, y)
                 if y is not None:
                     if new_result not in results:
-                        results.append(new_result)
-                        self.log(new_result,"added to results.")
+                        if self.absgap <= self.gap_tol:
+                            results.append(new_result)
+                            self.log(new_result,"added to results.")
+                        else:
+                            self.log("gap", self.absgap, ">", self.gap_tol)
                     else:
                         self.log(new_result,"already in results.")
                 else:
@@ -631,7 +657,7 @@ class SolverInstance:
 
     def descendingStepMethod(self, min_step, time_constr=None, clean=True,
                                  plot_this=True, mintomax=False,
-                                 epsilon_min=None, epsilon_max=None,
+                                 epsilon_min=None, epsilon_max=None,log=False,
                                  solveInstanceOptions={}):  # TODO
         """Set steps for epsilon.
 
@@ -994,21 +1020,27 @@ class SolverInstance:
 if __name__ == "__main__":
     start1 = time.time()
     sol1=SolverInstance("cplex_local")
-    sol1.setProperties(tee=True)
-    sol1.setSolverOptions(mipgap=0.001)    
-    sol1.weightedSumMethod(steps=100, steps_per_power_of_ten=10, log=True, plot_this=False, live_output=True)
+    sol1.setProperties(tee=False, load_solutions=False, gap_tol=0.0) 
+    sol1.weightedSumMethod(steps=200, steps_per_power_of_ten=15, log=False, plot_this=False, live_output=False)
     time1 = time.time() - start1
     start2 = time.time()
     sol2 =SolverInstance()
-    sol2.setProperties(tee=True)
-    sol2.weightedSumMethod(steps=100, steps_per_power_of_ten=10, log=True, plot_this=False, live_output=True)
+    sol2.setProperties(tee=False, load_solutions=False, gap_tol=0.0)
+    sol2.weightedSumMethod(steps=200, steps_per_power_of_ten=15, log=False, plot_this=False, live_output=False)
     time2 = time.time() - start2
-    # start3 = time.time()
-    # sol3 =SolverInstance()
+    start3 = time.time()
+    sol3 =SolverInstance("glpk_local")
     # sol3.setProperties(tee=True)
-    # sol3.setSolverOptions(threads=4)
-    # sol3.weightedSumMethod(steps=100, steps_per_power_of_ten=10, log=True, plot_this=False, live_output=True)
-    # time3 = time.time() - start3
+    sol3.weightedSumMethod(steps=100, steps_per_power_of_ten=10, log=True, plot_this=False, live_output=True)
+    time3 = time.time() - start3
     SolverInstance.pareto_plot(sol1.WSM_Points, sol2.WSM_Points)#, sol3.WSM_Points)
     print("cplex=",time1)
     print("cbc=", time2) 
+    # -- Get all solutions from this run --
+    # for key, val in sol1.results.items():
+    #     if sol1.results[key].solution.gap == 0:
+    #         print(sol1.results[key].solution().Variable["Costs_ges"]["Value"],
+    #               sol1.results[key].solution().Variable["DQ_ges"]["Value"],
+    #               sol1.results[key].solution.gap)
+    
+    set(np.array(sol1.WSM_Points)[:,0]), set(np.array(sol2.WSM_Points)[:,0])

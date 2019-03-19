@@ -64,7 +64,7 @@ class SolverInstance:
                  live_output = True,
                  model_module=model_MINLP,
                  model_properties={},
-                 datafile="Database5.xlsm", **kwargs):
+                 datafile="Database6.xlsm", **kwargs):
         """Set solver (``default="cbc_local"``) and properties.
         """
 

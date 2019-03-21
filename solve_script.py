@@ -64,7 +64,9 @@ class SolverInstance:
                  live_output = True,
                  model_module=model_MINLP,
                  model_properties={},
-                 datafile="Database6.xlsm", **kwargs):
+                 datafile="Database6.xlsm",
+                 analyze_mode=False,
+                 **kwargs):
         """Set solver (``default="cbc_local"``) and properties.
         """
 
@@ -72,7 +74,8 @@ class SolverInstance:
         self.solver_name = solver_name
         self.live_output = live_output
         self.model_module = model_module
-        self.buildModel(**model_properties)  # Sets self.model
+        if not analyze_mode:
+            self.buildModel(**model_properties)  # Sets self.model
         self.kwargs = kwargs
         self.datafile = datafile
         self.solver_options = {}
@@ -146,14 +149,17 @@ class SolverInstance:
             }
 
         # Set Solver for this SolverInstance
-        self.setSolver(self.solver_name)
+        if not analyze_mode:
+            self.setSolver(self.solver_name)
 
         # Set default Properties for this SolverInstance
         self.setProperties(**self.kwargs)
-        if self.live_output:
-            self.getProperties()
-
-        self.loadData(self.datafile)
+        
+        if not analyze_mode:
+            if self.live_output:
+                self.getProperties()
+            
+            self.loadData(self.datafile)
 
     def setSolver(self, solver_name):
         """Sets the Solver specific values.
@@ -217,20 +223,49 @@ class SolverInstance:
                       symbolic_solver_labels=True,
                       tee=False,  # True prints solver output to screen
                       keep_files=False,  # True prints intermediate file names
-                      create_LP_files=False,
-                      create_NL_files=False,
+                      debug_pyomo=False,
+                      create_lp_files=False,
+                      create_nl_files=False,
                       clean=False,
                       load_solutions=True,
-                      gap_tol=None):
-        """Sets Properties for the solving process."""
+                      gap_tol=None,
+                      log_this=False):
+        """Sets Properties for the solving process.
+        
+        ***********
+        Parameters:
+            
+            symbolic_solver_labels=True,
+        
+            tee=False,  # True prints solver output to screen
+                      
+            keep_files=False,  # True prints intermediate file names
+                      
+            debug_pyomo=False,
+                      
+            create_lp_files=False,
+                      
+            create_nl_files=False,
+                      
+            clean=False,
+                      
+            load_solutions=True,
+                      
+            gap_tol=None
+            
+            log_this=False
+        
+        """
         self.symbolic_solver_labels = symbolic_solver_labels
         self.tee = tee
         self.keep_files = keep_files
-        self.create_LP_files = create_LP_files
-        self.create_NL_files = create_NL_files
+        self.debug_pyomo = debug_pyomo
+        self.create_lp_files = create_lp_files
+        self.create_nl_files = create_nl_files
         self.clean = clean
         self.load_solutions = load_solutions
         self.gap_tol = gap_tol or float('inf')
+        self.log_this = log_this
         
     def getProperties(self):
         """Prints all current properties."""
@@ -238,17 +273,18 @@ class SolverInstance:
         print("# symbolic_solver_labels: ",   self.symbolic_solver_labels)
         print("# tee (live log):         ",   self.tee)
         print("# keep_files:             ",   self.keep_files)
-        print("# create_LP_files:        ",   self.create_LP_files)
-        print("# create_NL_files:        ",   self.create_NL_files)
+        print("# debug_pyomo:            ",   self.debug_pyomo)
+        print("# create_lp_files:        ",   self.create_lp_files)
+        print("# create_nl_files:        ",   self.create_nl_files)
         print("# clean (no files):       ",   self.clean)
         print("# load_solutions (getgap):",   self.load_solutions)
         print("# gap_tol(erance):        ",   self.gap_tol)
+        print("# log_this:               ",   self.log_this)
         print("#\n# To manipulate properties use setProperties().")
         print("################################################\n")
 ###############################################################################
 
-
-    def loadData(self, filename):
+    def loadData(self, filename, saveall=False):
         """Loads the data from an excel-file a dict.
 
         Saves the dict as pickle and txt in ./logs/input_data.
@@ -258,9 +294,9 @@ class SolverInstance:
                 Filename incl. extention. Can be a path.
         """
         self.data = Dataset(filename).pyomo_dict
-        if not self.clean:
-            print("\nData successfully loaded.\n")
-            savedata(self.data, "input_data", "logs/input_data", human=True)
+        if not self.clean or saveall:
+            self.log("\n"+filename+" successfully loaded.\n")
+            savedata(self.data, filename, "logs/input_data", human=True)
 
     def addData(self, **kwargs):
         """Adds data to the loaded ``self.data`` variable.
@@ -275,7 +311,6 @@ class SolverInstance:
                 deep_merge(self.data[None],{key: value})
             else:
                 self.data[None].update({key: {None: value}})
-
 
     def printModel(self):
         self.model.pprint()
@@ -406,8 +441,16 @@ class SolverInstance:
 
         return instance
 
-    def solveInstance(self, **kwargs):
-        """Generates an Instance of the given model and invokes the Solver.
+    def generateInstance(self, inst_name="", **kwargs):
+        """Generates an Instance of the given model"""
+
+        # Create Instance
+        self.instance = None  # Clean-up
+        self.instance = self.model.create_instance(data=self.data,
+                                                   name=inst_name)
+        
+    def solveInstance(self, new_inst=False, **kwargs):
+        """Invokes the Solver.
         All attributes of the instance can be modified via given
         keyword-arguments.
 
@@ -419,10 +462,6 @@ class SolverInstance:
             DQ_ges_max
                 Sets minimum required Data-Quality.
         """
-        allowed_keys = ["u", "DQ_ges_max", "DQ_ges_min", "Costs_ges_max", "Costs_ges_min", 
-                        "n", "DQ_func_type", "R_J_func_type"]
-        allowed_keys.sort()
-
         # Build Instance Name
         inst_name_parts = []  # Dump for Instance Name
         inst_name_parts.append(self.solver_name)  # Solver Name on first place.
@@ -431,12 +470,16 @@ class SolverInstance:
                 if value is not None:
                     inst_name_parts.append(key+"("+str(value)+")")
         inst_name = "-".join(inst_name_parts)  # set delimeter
-
-        # Create Instance
-        self.instance = None  # Clean-up
-        self.instance = self.model.create_instance(data=self.data,
-                                                   name=inst_name)
-
+        
+        # Create a new instance.
+        if new_inst:
+            inst_name = self.generateInstance(inst_name=inst_name, **kwargs)
+        
+        
+        allowed_keys = ["u", "DQ_ges_max", "DQ_ges_min", "Costs_ges_max", "Costs_ges_min", 
+                        "n", "DQ_func_type", "R_J_func_type"]
+        allowed_keys.sort()
+        
         # Assign Parameters
         for key, value in kwargs.items():
             if key in allowed_keys:
@@ -462,11 +505,11 @@ class SolverInstance:
             self.instance.pprint(filename=os.path.join(*path_generated))
 
         # Write generated NL-File
-        if self.create_NL_files and not self.clean:
+        if self.create_nl_files and not self.clean:
             path_nl = ["logs", "nl-files", "nlfile_"+inst_name+".nl"]
             self.instance.write(os.path.join(*path_nl), format="nl")
 
-        if self.create_LP_files and not self.clean:
+        if self.create_lp_files and not self.clean:
             path_lp = ["logs", "lp-files", "lpfile_"+inst_name+".lp"]
             io_opt_lp = {"symbolic_solver_labels": self.symbolic_solver_labels}
             self.instance.write(os.path.join(*path_lp), format="lp",
@@ -488,7 +531,7 @@ class SolverInstance:
             obj = self.solved_instance.CombinedValue()
             DQ = self.solved_instance.DQ_ges()
             Costs = self.solved_instance.Costs_ges()
-            
+            print()
             if obj is not None:
                 print("Objective for {0}: {1:12.2f}".format(inst_name, obj))
             if DQ is not None:
@@ -511,9 +554,9 @@ class SolverInstance:
         """Set either DQ or Costs to get a solution for the other."""
 
         if DQ_ges_min is not None and Costs_ges_max is None:
-            self.solveInstance(u=1, DQ_ges_min=DQ_ges_min)
+            self.solveInstance(new_inst=True, u=1, DQ_ges_min=DQ_ges_min)
         elif Costs_ges_max is not None and DQ_ges_min is None:
-            self.solveInstance(u=0, Costs_ges_max=Costs_ges_max)
+            self.solveInstance(new_inst=True, u=0, Costs_ges_max=Costs_ges_max)
         else:
             raise KeyError("Specify DQ_ges_max OR Cost_ges_max!")
 
@@ -545,18 +588,20 @@ class SolverInstance:
         self.clean = True
         self.log_this=log
         
-        plotname_list = ["weighted_sum"]
+        plotname_list = ["weighted_sum_init"]
         
         if steps is None:
             raise ValueError('Specify steps.')
         
         # Start
         results = []
+        self.generateInstance("weightedSumMethod_init", **solveInstanceOptions)
+        
         
         def solve_u(j, **args):
             self.log("u =",j)
             try:
-                self.solveInstance(u=j, **{**args, **solveInstanceOptions})
+                self.solveInstance(u=j, **args)
                 x, y = self.solved_instance.Costs_ges(), self.solved_instance.DQ_ges()
 
                 new_result = (x, y)
@@ -580,19 +625,19 @@ class SolverInstance:
         
         
         if Costs_ges_min is None:
-            self.solveInstance(u=1, **solveInstanceOptions)
+            self.solveInstance(u=1)
             Costs_ges_min = self.solved_instance.Costs_ges()
              
         if Costs_ges_max is None:
-            self.solveInstance(u=0, **solveInstanceOptions)
+            self.solveInstance(u=0)
             Costs_ges_max = self.solved_instance.Costs_ges()
         
         if DQ_ges_min is None:
-            self.solveInstance(u=1, **solveInstanceOptions)
+            self.solveInstance(u=1)
             DQ_ges_min = self.solved_instance.DQ_ges()
              
         if DQ_ges_max is None:
-            self.solveInstance(u=0, **solveInstanceOptions)
+            self.solveInstance(u=0)
             DQ_ges_max = self.solved_instance.DQ_ges()
         
         
@@ -606,7 +651,10 @@ class SolverInstance:
             j = 0
             for i in range(1,steps+1):
                 self.log("Solving step",i)
-                solve_u(j, Costs_ges_max=Costs_ges_max, Costs_ges_min=Costs_ges_min, DQ_ges_max=DQ_ges_max, DQ_ges_min=DQ_ges_min)
+                solve_u(j, Costs_ges_max=Costs_ges_max, 
+                        Costs_ges_min=Costs_ges_min, 
+                        DQ_ges_max=DQ_ges_max, 
+                        DQ_ges_min=DQ_ges_min)
                 j = 10**(-2*i/(steps_per_power_of_ten*2)) # Start with 1 and descend
                 
             plotname_list.append("({0})steps_until({1})".format(steps, j))
@@ -627,7 +675,10 @@ class SolverInstance:
                 solve_u(1)
                 
             for j in steps:
-                solve_u(j, Costs_ges_max=Costs_ges_max, Costs_ges_min=Costs_ges_min, DQ_ges_max=DQ_ges_max, DQ_ges_min=DQ_ges_min)
+                solve_u(j, Costs_ges_max=Costs_ges_max, 
+                        Costs_ges_min=Costs_ges_min, 
+                        DQ_ges_max=DQ_ges_max, 
+                        DQ_ges_min=DQ_ges_min)
                  
             plotname_list.append("({0})steps".format(len(steps)))
 
@@ -669,6 +720,7 @@ class SolverInstance:
         clean_state = self.clean
         self.clean = True
         self.log_this=log
+        
         if min_step <= 0:
             raise ValueError('min_step as to be greater than zero!')
 
@@ -696,7 +748,11 @@ class SolverInstance:
 
         plot_name = ("_").join(plotname_list)
 
-
+        # Generate Instance
+        self.generateInstance("descendingStepMethod_init", **solveInstanceOptions)
+        
+        self.log("\n# Successfully created instance.")
+        
         if epsilon_min is None:
             self.solveInstance(u=1, **solveInstanceOptions)
             self.epsilon_min = self.solved_instance.Costs_ges()
@@ -704,7 +760,7 @@ class SolverInstance:
             # this needs to be going into a different direction
             # a Cost_ges_min needs to be specified?
             self.epsilon_min = epsilon_min  # TODO
-            self.solveInstance(u=0, Costs_ges_min=self.epsilon_min, **solveInstanceOptions)
+            self.solveInstance(u=0, Costs_ges_min=self.epsilon_min)
         result_min = self.solved_instance.DQ_ges()
 
         if epsilon_max is None:
@@ -712,15 +768,15 @@ class SolverInstance:
             self.epsilon_max = self.solved_instance.Costs_ges()
         else:
             self.epsilon_max = epsilon_max
-            self.solveInstance(u=0, Costs_ges_max=self.epsilon_max, **solveInstanceOptions)
+            self.solveInstance(u=0, Costs_ges_max=self.epsilon_max)
         result_max = self.solved_instance.DQ_ges()
 
 
         if mintomax:  # !!! This part generates shitty solutions
             epsilon = self.epsilon_min
             current_result = result_min
-            print("\n# Solving from", self.epsilon_min, "to", self.epsilon_max)
-            print("# Minimal step =", min_step)
+            self.log("\n# Solving from", self.epsilon_min, "to", self.epsilon_max)
+            self.log("# Minimal step =", min_step)
 
             pbar = ProgressBar(min_value=self.epsilon_min,
                                max_value=self.epsilon_max,
@@ -728,7 +784,7 @@ class SolverInstance:
 
             while epsilon + min_step < self.epsilon_max:
                 epsilon += min_step
-                self.solveInstance(u=0, Costs_ges_max=epsilon, **solveInstanceOptions)
+                self.solveInstance(u=0, Costs_ges_max=epsilon)
                 new_epsilon = self.solved_instance.Costs_ges()
                 new_result = self.solved_instance.DQ_ges()
                 if new_result >= current_result:
@@ -742,15 +798,15 @@ class SolverInstance:
         if not mintomax:
             epsilon = self.epsilon_max
             current_result = result_max
-            print("\n# Solving from", self.epsilon_max, "to", self.epsilon_min)
-            print("# Minimal step =", min_step)
+            self.log("\n# Solving from", self.epsilon_max, "to", self.epsilon_min)
+            self.log("# Minimal step =", min_step)
 
             pbar = ProgressBar(min_value=self.epsilon_min,
                                max_value=self.epsilon_max,
                                initial_value=self.epsilon_max).start()
 
             while epsilon > self.epsilon_min:
-                self.solveInstance(u=0, Costs_ges_max=epsilon, **solveInstanceOptions)
+                self.solveInstance(u=0, Costs_ges_max=epsilon)
                 new_epsilon = self.solved_instance.Costs_ges()
                 new_result = self.solved_instance.DQ_ges()
                 if current_result >= new_result:
@@ -804,8 +860,6 @@ class SolverInstance:
         :param log: (:const:`boolean=False`)
             Log every algorithm-step.
         """
-        
-        from operator import itemgetter
 
         #Start
         live_output_state = self.live_output
@@ -824,15 +878,18 @@ class SolverInstance:
         plotname_list.append("b({})".format(b_max))
 
         plot_name = ("_").join(plotname_list)
-
+        
+        self.generateInstance("Adaptive bisection e-constraint method _init",
+                              **solveInstanceOptions)
+        
         # Find anchor points
-        self.solveInstance(u=1, DQ_ges_min=y_min, **solveInstanceOptions)
+        self.solveInstance(u=1, DQ_ges_min=y_min)
         self.mu1opt = self.solved_instance.DQ_ges()
         y1 = self.solved_instance.DQ_ges()
         x1 = self.solved_instance.Costs_ges()
         results.append((x1, y1))
 
-        self.solveInstance(u=0, Costs_ges_max=x_max, **solveInstanceOptions)
+        self.solveInstance(u=0, Costs_ges_max=x_max)
         self.mu2opt = self.solved_instance.Costs_ges()
         y2 = self.solved_instance.DQ_ges()
         x2 = self.solved_instance.Costs_ges()
@@ -878,7 +935,7 @@ class SolverInstance:
                 continue
 
             # Solve Optimization Problem
-            self.solveInstance(u=0, DQ_ges_min=e_lb, Costs_ges_max=e_ub, **solveInstanceOptions)
+            self.solveInstance(u=0, DQ_ges_min=e_lb, Costs_ges_max=e_ub)
 
             # Is a feassible solution found?
             if self.solved_instance.DQ_ges() is None:  # No
@@ -942,10 +999,8 @@ class SolverInstance:
         if plot_this:
             self.pareto_plot(self.ABE_Points, filename=plot_name)
 
-
-    # Compute nondominated Points
     @staticmethod
-    def is_pareto(all_points):
+    def is_pareto(all_points): # Compute nondominated Points
         """Masks pareto efficient Points.
         
         :param all_points: An (n_points, n_all_points) array
@@ -1017,30 +1072,30 @@ class SolverInstance:
             fig.savefig(os.path.join("plots","plot_"+filename+".pdf"), format="pdf") # save the figure to file
         plt.close(fig)
         
-if __name__ == "__main__":
-    start1 = time.time()
-    sol1=SolverInstance("cplex_local")
-    sol1.setProperties(tee=False, load_solutions=False, gap_tol=0.0) 
-    sol1.weightedSumMethod(steps=200, steps_per_power_of_ten=15, log=False, plot_this=False, live_output=False)
-    time1 = time.time() - start1
-    start2 = time.time()
-    sol2 =SolverInstance()
-    sol2.setProperties(tee=False, load_solutions=False, gap_tol=0.0)
-    sol2.weightedSumMethod(steps=200, steps_per_power_of_ten=15, log=False, plot_this=False, live_output=False)
-    time2 = time.time() - start2
-    start3 = time.time()
-    sol3 =SolverInstance("glpk_local")
-    # sol3.setProperties(tee=True)
-    sol3.weightedSumMethod(steps=100, steps_per_power_of_ten=10, log=True, plot_this=False, live_output=True)
-    time3 = time.time() - start3
-    SolverInstance.pareto_plot(sol1.WSM_Points, sol2.WSM_Points)#, sol3.WSM_Points)
-    print("cplex=",time1)
-    print("cbc=", time2) 
-    # -- Get all solutions from this run --
-    # for key, val in sol1.results.items():
-    #     if sol1.results[key].solution.gap == 0:
-    #         print(sol1.results[key].solution().Variable["Costs_ges"]["Value"],
-    #               sol1.results[key].solution().Variable["DQ_ges"]["Value"],
-    #               sol1.results[key].solution.gap)
+# if __name__ == "__main__":
+#     start1 = time.time()
+#     sol1=SolverInstance("cplex_local")
+#     sol1.setProperties(tee=False, load_solutions=False, gap_tol=0.0) 
+#     sol1.weightedSumMethod(steps=200, steps_per_power_of_ten=15, log=False, plot_this=False, live_output=False)
+#     time1 = time.time() - start1
+#     start2 = time.time()
+#     sol2 =SolverInstance()
+#     sol2.setProperties(tee=False, load_solutions=False, gap_tol=0.0)
+#     sol2.weightedSumMethod(steps=200, steps_per_power_of_ten=15, log=False, plot_this=False, live_output=False)
+#     time2 = time.time() - start2
+#     start3 = time.time()
+#     sol3 =SolverInstance("glpk_local")
+#     # sol3.setProperties(tee=True)
+#     sol3.weightedSumMethod(steps=100, steps_per_power_of_ten=10, log=True, plot_this=False, live_output=True)
+#     time3 = time.time() - start3
+#     SolverInstance.pareto_plot(sol1.WSM_Points, sol2.WSM_Points)#, sol3.WSM_Points)
+#     print("cplex=",time1)
+#     print("cbc=", time2) 
+#     # -- Get all solutions from this run --
+#     # for key, val in sol1.results.items():
+#     #     if sol1.results[key].solution.gap == 0:
+#     #         print(sol1.results[key].solution().Variable["Costs_ges"]["Value"],
+#     #               sol1.results[key].solution().Variable["DQ_ges"]["Value"],
+#     #               sol1.results[key].solution.gap)
     
-    set(np.array(sol1.WSM_Points)[:,0]), set(np.array(sol2.WSM_Points)[:,0])
+#     set(np.array(sol1.WSM_Points)[:,0]), set(np.array(sol2.WSM_Points)[:,0])

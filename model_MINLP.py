@@ -141,10 +141,10 @@ def createModel(repn_DQ=3, constr_DQ=2, PieceCnt_DQ=10, func_factor_DQ=2, **kwar
     model.t_ub              = pe.Param(model.P, default=8*60, domain=pe.NonNegativeReals)      # min
 
     # Temperaturen
-    model.theta_V_ub        = pe.Param(model.V, default=30, domain=pe.Integers)  # constr. if not None
-    model.theta_V_lb        = pe.Param(model.V, default=20, domain=pe.Integers)
-    model.theta_J_ub        = pe.Param(model.J, default=1000000, domain=pe.Integers)
-    model.theta_J_lb        = pe.Param(model.J, default=-275, domain=pe.Integers)
+    model.theta_V_ub        = pe.Param(model.V, default=30, domain=pe.Integers, mutable=True)  # constr. if not None
+    model.theta_V_lb        = pe.Param(model.V, default=20, domain=pe.Integers, mutable=True)
+    model.theta_J_ub        = pe.Param(model.J, default=1000000, domain=pe.Integers, mutable=True)
+    model.theta_J_lb        = pe.Param(model.J, default=-275, domain=pe.Integers, mutable=True)
 
     # Bandbreiten
     model.r                 = pe.Param(model.Q, default=1, domain=pe.Reals)
@@ -539,13 +539,15 @@ def createModel(repn_DQ=3, constr_DQ=2, PieceCnt_DQ=10, func_factor_DQ=2, **kwar
 
     # Temperatures
     def ConstrainMaxTheta_rule(model, j, v):
-        return model.delta[j, v] * model.theta_J_ub[j] >= model.delta[j, v] * model.theta_V_ub[v]
+        return model.delta[j, v] * (model.theta_J_ub[j] - model.theta_V_ub[v]) >= 0
     model.ConstrainMaxTheta = pe.Constraint(model.J, model.V,
                                             rule=ConstrainMaxTheta_rule)
     def ConstrainMinTheta_rule(model, j, v):
-        return model.delta[j, v] * model.theta_J_lb[j] <= model.delta[j, v] * model.theta_V_lb[v]
+        return model.delta[j, v] * (model.theta_J_lb[j] - model.theta_V_lb[v]) <= 0
     model.ConstrainMinTheta = pe.Constraint(model.J, model.V,
                                             rule=ConstrainMinTheta_rule)
+    
+    
 
     #==============================================================================
 
